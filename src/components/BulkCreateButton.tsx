@@ -6,7 +6,7 @@ export default function BulkCreateButton() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   async function run() {
-    if (!confirm("Create appraisal records for all active employees with an assigned HOD?"))
+    if (!confirm("Create Annual appraisal records for all active appraisees with a routed org chart?"))
       return;
     setBusy(true);
     try {
@@ -16,8 +16,11 @@ export default function BulkCreateButton() {
         body: JSON.stringify({ bulk: true }),
       });
       const data = await res.json();
-      alert(`Created ${data.created}, existing ${data.existing}.`);
+      if (!res.ok) throw new Error(data.error || "Failed");
+      alert(`Created ${data.created}, already existed ${data.existing}.`);
       router.refresh();
+    } catch (e) {
+      alert((e as Error).message);
     } finally {
       setBusy(false);
     }

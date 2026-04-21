@@ -1,471 +1,669 @@
 "use client";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Appraisal, Employee, FactorScore, Session } from "@/types";
+import type {
+  AppRole,
+  AppraisalFull,
+  AppraisalScore,
+  AppraisalTraining,
+  SectionIV,
+} from "@/types";
 import ScoringMatrix from "./ScoringMatrix";
 import StatusBadge from "./StatusBadge";
 import WorkflowBanner from "./WorkflowBanner";
 import GuidelinesPanel from "./GuidelinesPanel";
-import { PERFORMANCE_BANDS } from "@/lib/criteria";
-import { bandFor, gateTriggered, isFullyRated, overallScore } from "@/lib/scoring";
-import { canActAs } from "@/lib/workflow";
+import {
+  APPRAISAL_TYPE_LABELS,
+  RECOMMENDATION_LABELS,
+  bandFor,
+  criteriaFor,
+} from "@/lib/criteria";
+import { computeTotals } from "@/lib/scoring";
+import { canViewSectionIV } from "@/lib/workflow";
+import { periodLabel } from "@/lib/period";
 
 interface Props {
-  appraisal: Appraisal;
-  employee: Employee;
-  session: Session;
-  hod?: Employee;
-  countersigner?: Employee;
+  appraisal: AppraisalFull;
+  role: AppRole;
+  userId: string;
 }
 
-export default function AppraisalForm({
-  appraisal: initial,
-  employee,
-  session,
-  hod,
-  countersigner,
-}: Props) {
+export default function AppraisalForm({ appraisal: initial, role, userId }: Props) {
   const router = useRouter();
-  const [a, setA] = useState<Appraisal>(initial);
+  const [a, setA] = useState<AppraisalFull>(initial);
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
-  const [employeeComments, setEmployeeComments] = useState(
-    initial.narrative.employeeComments,
-  );
 
-  const editableHOD = session.role === "hod" && canActAs(session.role, a.state);
-  const editableSM = session.role === "countersigner" && canActAs(session.role, a.state);
-  const editableAdmin = session.role === "admin" && canActAs(session.role, a.state);
+  const criteria = useMemo(() => criteriaFor(a.form_type), [a.form_type]);
 
-  const derived = useMemo(() => {
-    const computed: FactorScore[] = a.scores.map((s) => {
-      const eff = s.smRating ?? s.hodRating;
-      return {
-        ...s,
-        effectiveRating: eff,
-        weightedScore: eff == null ? null : Number((eff * s.weight).toFixed(4)),
-      };
-    });
-    const tmp = { ...a, scores: computed };
-    const o = overallScore(tmp);
-    return {
-      scores: computed,
-      overall: o,
-      band: bandFor(o),
-      gate: gateTriggered(tmp),
-      ready: isFullyRated(computed),
-    };
-  }, [a]);
+  const editableAppraiser =
+    role === "appraiser" && a.state === "pending_appraiser" && a.appraiser_id === userId;
+  const editableSM = role === "senior_management" && a.state === "pending_sm";
+  const editableAppraisee =
+    role === "appraisee" && a.state === "pending_appraisee" && a.employee_id === userId;
+  const editableHOD = role === "hod" && a.state === "pending_hod" && a.hod_id === userId;
+  const editableHR = role === "hr_admin" && a.state === "pending_hr";
 
-  function updateScore(idx: number, patch: Partial<FactorScore>) {
-    setA((prev) => {
-      const scores = prev.scores.map((s, i) => (i === idx ? { ...s, ...patch } : s));
-      return { ...prev, scores };
-    });
+  const showSection4 = canViewSectionIV(role);
+
+  const totals = useMemo(() => computeTotals(a.scores), [a.scores]);
+  const band = bandFor(totals.pct);
+
+  function mutateScore(criterion_no: number, patch: Partial<AppraisalScore>) {
+    setA((prev) => ({
+      ...prev,
+      scores: prev.scores.map((s) => (s.criterion_no === criterion_no ? { ...s, ...patch } : s)),
+    }));
+  }
+  function mutateTraining(training_type: string, patch: Partial<AppraisalTraining>) {
+    setA((prev) => ({
+      ...prev,
+      training: prev.training.map((t) =>
+        t.training_type === training_type ? { ...t, ...patch } : t,
+      ),
+    }));
+  }
+  function mutateNarrative(patch: Partial<AppraisalFull["narrative"]>) {
+    setA((prev) => ({ ...prev, narrative: { ...prev.narrative, ...patch } }));
+  }
+  function mutateSection4(patch: Partial<SectionIV>) {
+    setA((prev) => ({
+      ...prev,
+      section_iv: { ...(prev.section_iv ?? ({} as SectionIV)), ...patch } as SectionIV,
+    }));
   }
 
-  async function save() {
+  async function save(silent = false) {
     setBusy(true);
+    setErr(null);
     try {
       const res = await fetch(`/api/appraisals/${a.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(a),
+        body: JSON.stringify({
+          scores: a.scores.map((s) => ({
+            criterion_no: s.criterion_no,
+            is_applicable: s.is_applicable,
+            appraiser_rating: s.appraiser_rating,
+            sm_rating: s.sm_rating,
+            comments: s.comments,
+          })),
+          training: a.training.map((t) => ({
+            training_type: t.training_type,
+            is_selected: t.is_selected,
+            remarks: t.remarks,
+          })),
+          narrative: a.narrative,
+          section_iv: showSection4 && a.section_iv ? a.section_iv : undefined,
+        }),
       });
-      const next = await res.json();
-      if (!res.ok) throw new Error(next.error || "Save failed");
-      setA(next);
-      setMsg({ kind: "ok", text: "Draft saved." });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Save failed");
+      setA(data);
+      if (!silent) setMsg("Saved.");
     } catch (e) {
-      setMsg({ kind: "err", text: (e as Error).message });
+      setErr((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
 
-  async function transition(action: string, extra: Record<string, unknown> = {}) {
+  async function transition(action: string, reason?: string) {
     setBusy(true);
+    setErr(null);
     setMsg(null);
     try {
-      // Save first so server has latest scores
-      await fetch(`/api/appraisals/${a.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(a),
-      });
+      await save(true);
       const res = await fetch(`/api/appraisals/${a.id}/transition`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, ...extra }),
+        body: JSON.stringify({ action, reason }),
       });
-      const next = await res.json();
-      if (!res.ok) throw new Error(next.error || "Action failed");
-      setA(next);
-      setMsg({ kind: "ok", text: `${action.replace(/_/g, " ")} succeeded.` });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Action failed");
+      setA(data);
+      setMsg(`${action.replace(/_/g, " ")} succeeded.`);
       router.refresh();
     } catch (e) {
-      setMsg({ kind: "err", text: (e as Error).message });
+      setErr((e as Error).message);
     } finally {
       setBusy(false);
     }
   }
 
-  const readOnlyMeta = session.role !== "admin" || !editableAdmin;
-
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4 sm:gap-6">
       <WorkflowBanner state={a.state} />
 
+      {err && (
+        <div className="rounded-md border bg-rose-50 border-rose-200 text-rose-800 px-4 py-2 text-[13px]">{err}</div>
+      )}
       {msg && (
-        <div
-          className={`rounded-md border px-4 py-2 text-[13px] ${
-            msg.kind === "ok"
-              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-              : "bg-rose-50 border-rose-200 text-rose-800"
-          }`}
-        >
-          {msg.text}
-        </div>
+        <div className="rounded-md border bg-emerald-50 border-emerald-200 text-emerald-800 px-4 py-2 text-[13px]">{msg}</div>
       )}
 
-      {/* WORKER INFO */}
+      {/* Form title + appraisal type checkbox row (matches the top of the PA form) */}
       <section className="card">
-        <header className="card-header">
-          <span className="card-label">A</span>
-          <span className="card-title">Worker Information</span>
-          <div className="ml-auto flex items-center gap-3">
-            <StatusBadge state={a.state} />
-            {a.performanceBand && (
-              <span className="chip bg-slate-100 text-slate-700">{a.performanceBand}</span>
-            )}
+        <div className="px-4 sm:px-7 py-4 border-b border-rule flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-[11px] tracking-[0.12em] uppercase text-slate-500">
+              Performance Appraisal
+            </div>
+            <div className="text-[15px] font-semibold">
+              {a.form_type === "workers" ? "Non-Office Staff" : "Office Staff"}
+            </div>
           </div>
-        </header>
-        <div className="card-body grid grid-cols-2 md:grid-cols-4 gap-5">
-          <Field label="Employee Name" value={employee.name} />
-          <Field label="Employee ID" value={employee.employeeId} />
-          <Field label="Department" value={employee.department} />
-          <Field label="Designation" value={employee.designation} />
-          <Field label="Appraisal Period" value={a.period} />
-          <Field
-            label="Date of Review"
-            editable={editableAdmin}
-            value={a.reviewDate}
-            type="date"
-            onChange={(v) => setA({ ...a, reviewDate: v })}
-          />
-          <Field label="Assessed by (HOD)" value={hod?.name ?? "—"} />
-          <Field label="Countersigned by" value={countersigner?.name ?? "—"} />
+          <div className="flex items-center gap-2 flex-wrap">
+            {(["annual", "confirmation", "promotion"]).map((t) => (
+              <span
+                key={t}
+                className={`inline-flex items-center gap-1.5 border rounded px-2 py-1 text-[12px] ${
+                  a.appraisal_type === t
+                    ? "bg-navy text-white border-navy"
+                    : "border-rule text-slate-500"
+                }`}
+              >
+                <span className={`inline-block w-3 h-3 border ${a.appraisal_type === t ? "bg-white border-white" : "border-slate-400"}`} />
+                {APPRAISAL_TYPE_LABELS[t]}
+              </span>
+            ))}
+            <StatusBadge state={a.state} />
+          </div>
         </div>
       </section>
 
-      {/* GUIDELINES */}
-      {(session.role === "hod" || session.role === "countersigner") && <GuidelinesPanel />}
-
-      {/* MATRIX */}
+      {/* Section I — Header */}
       <section className="card">
         <header className="card-header">
-          <span className="card-label">B</span>
-          <span className="card-title">Appraisal Matrix</span>
+          <span className="card-label">(I)</span>
+          <span className="card-title">Staff Current Details</span>
+        </header>
+        <div className="card-body grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 sm:gap-5">
+          <Field label="Name" value={a.employee.name} />
+          <Field label="E/No." value={a.employee.employee_no} />
+          <Field label="Designation" value={a.employee.designation ?? "—"} />
+          <Field label="Date Joined" value={a.employee.date_joined ?? "—"} />
+          <Field label="Department" value={a.employee.department ?? "—"} />
+          <Field
+            label={a.form_type === "workers" ? "Assessed period" : "Assessment period"}
+            value={periodLabel(a.cycle_year)}
+          />
+          <Field label="Appraiser" value={a.appraiser?.name ?? "—"} />
+          <Field label="HOD" value={a.hod?.name ?? "—"} />
+        </div>
+      </section>
+
+      {(role === "appraiser" || role === "hod" || role === "senior_management") && (
+        <GuidelinesPanel />
+      )}
+
+      {/* Section II — Scoring */}
+      <section className="card">
+        <header className="card-header">
+          <span className="card-label">(II)</span>
+          <span className="card-title">
+            {a.form_type === "workers" ? "Assessment Rating" : "Assessment"}
+          </span>
           <span className="ml-auto text-[12px] text-slate-500">
-            {a.formType === "production_worker" ? "Production Worker" : "Office Staff"}
+            Cite examples to support each rating (required for applicable criteria).
           </span>
         </header>
-        <p className="px-7 pb-3 text-[12.5px] italic text-slate-500">
-          Select the applicable rating for each factor. Weighted score updates in real time.
-          Remarks are required for ratings of 1 or 5.
-        </p>
-        <div className="px-2">
+        <div className="px-4 sm:px-7 pt-3 pb-2 text-[12px] text-slate-600 flex flex-wrap gap-x-5 gap-y-1 border-b border-rule">
+          <span><strong>1. Very Poor</strong> — Very much below Expectation</span>
+          <span><strong>2. Poor</strong> — Below Expectation</span>
+          <span><strong>3. Satisfactory</strong> — Meet Expectation some of the time</span>
+          <span><strong>4. Good</strong> — Meet Expectation most of the time</span>
+          <span><strong>5. Excellent</strong> — Meet Expectation all the time</span>
+        </div>
+        <div className="card-body">
           <ScoringMatrix
-            formType={a.formType}
-            scores={derived.scores}
-            role={session.role}
-            overall={derived.overall}
-            gateFail={derived.gate}
-            onRatingChange={
-              editableHOD ? (idx, v) => updateScore(idx, { hodRating: v }) : undefined
-            }
-            onRemarksChange={
-              editableHOD ? (idx, v) => updateScore(idx, { hodRemarks: v }) : undefined
-            }
-            onSMOverride={
-              editableSM
-                ? (idx, rating, reason) =>
-                    updateScore(idx, { smRating: rating, smOverrideReason: reason })
-                : undefined
-            }
+            criteria={criteria}
+            scores={a.scores}
+            role={role}
+            showWeights
+            editableAppraiser={editableAppraiser}
+            editableSM={editableSM}
+            onChange={mutateScore}
           />
         </div>
-        {a.formType === "production_worker" && (
-          <div className="px-7 pb-5">
-            <div className="flex gap-3 items-start bg-rose-50 border border-rose-200 border-l-4 border-l-accent rounded px-4 py-3 text-[13px] leading-relaxed">
-              <span>⚠</span>
-              <span>
-                <strong className="text-accent">Gate Rule — Safety &amp; Compliance:</strong> A
-                rating of 1 on this factor caps the overall score at 2.0 and triggers a Gate Fail
-                flag. Admin is notified. Appraisal cannot proceed to countersigning without Admin
-                review.
+        <div className="px-4 sm:px-7 pb-5 bg-ghost border-t border-rule py-4">
+          <div className="text-[11px] tracking-wider uppercase text-slate-500 mb-1">Total</div>
+          <div className="flex items-center flex-wrap gap-2 text-[16px] font-semibold">
+            <span className="inline-block min-w-[60px] text-center border-b-2 border-slate-400 px-2">
+              {totals.total}
+            </span>
+            <span>/</span>
+            <span className="inline-block min-w-[60px] text-center border-b-2 border-slate-400 px-2">
+              {totals.max}
+            </span>
+            <span>× 100%</span>
+            <span>=</span>
+            <span
+              className="text-white rounded px-3 py-1 inline-block"
+              style={{ background: band?.color ?? "#6b7280" }}
+            >
+              {totals.pct != null ? `${totals.pct}%` : "—"}
+            </span>
+            {band && (
+              <span className="text-[13px] font-normal text-slate-600 ml-2 italic">
+                ({band.label})
               </span>
-            </div>
+            )}
           </div>
-        )}
+        </div>
       </section>
 
-      {/* PERFORMANCE BANDS */}
+      {/* Appraiser overall comments */}
+      {(editableAppraiser || a.narrative.appraiser_overall_comments) && (
+        <section className="card">
+          <header className="card-header">
+            <span className="card-label">II+</span>
+            <span className="card-title">Appraiser Overall Comments</span>
+          </header>
+          <div className="card-body">
+            <textarea
+              className="w-full min-h-[100px] border border-rule rounded p-3 text-[14px] outline-none focus:border-navy disabled:bg-ghost"
+              placeholder="Overall assessment, context, and highlights…"
+              disabled={!editableAppraiser}
+              value={a.narrative.appraiser_overall_comments}
+              onChange={(e) => mutateNarrative({ appraiser_overall_comments: e.target.value })}
+            />
+          </div>
+        </section>
+      )}
+
+      {/* Section III — Training */}
       <section className="card">
         <header className="card-header">
-          <span className="card-label">C</span>
-          <span className="card-title">Performance Band Reference</span>
+          <span className="card-label">(III)</span>
+          <span className="card-title">
+            {a.form_type === "workers"
+              ? "Training & Development Needs"
+              : "Recommended Training"}
+          </span>
+          <span className="ml-auto text-[12px] text-slate-500 italic">
+            {a.form_type === "workers"
+              ? "Tick the appropriate training needs based on this appraisal."
+              : "Identify recommended training per category, with remarks."}
+          </span>
         </header>
-        <div className="card-body grid grid-cols-2 md:grid-cols-5 gap-[1px] bg-rule rounded overflow-hidden">
-          {PERFORMANCE_BANDS.map((b) => (
-            <div key={b.label} className="bg-white p-4">
-              <div className="font-semibold">{b.min.toFixed(2)} – {b.max.toFixed(2)}</div>
-              <div className="text-[12px] text-slate-500 mt-0.5">{b.label}</div>
+        <div className="card-body">
+          {a.form_type === "workers" ? (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {a.training.map((t) => (
+                <label
+                  key={t.training_type}
+                  className={`flex items-start gap-2 p-3 border border-rule rounded cursor-pointer ${
+                    t.is_selected ? "bg-navy/5 border-navy" : ""
+                  } ${!editableAppraiser ? "cursor-default" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={!!t.is_selected}
+                    disabled={!editableAppraiser}
+                    onChange={(e) =>
+                      mutateTraining(t.training_type, { is_selected: e.target.checked })
+                    }
+                  />
+                  <span className="text-[13px]">{t.training_type}</span>
+                </label>
+              ))}
+              <label className="flex flex-col gap-1 sm:col-span-3 mt-2">
+                <span className="field-label">Others — pls specify</span>
+                <textarea
+                  className="border border-rule rounded p-2 text-[13px] outline-none focus:border-navy disabled:bg-ghost"
+                  rows={2}
+                  disabled={!editableAppraiser}
+                  value={
+                    a.training.find((t) => t.training_type === "Others: pls specify")
+                      ?.remarks ?? ""
+                  }
+                  onChange={(e) =>
+                    mutateTraining("Others: pls specify", { remarks: e.target.value })
+                  }
+                />
+              </label>
             </div>
-          ))}
-        </div>
-      </section>
-
-      {/* DEV NOTES */}
-      <section className="card">
-        <header className="card-header">
-          <span className="card-label">D</span>
-          <span className="card-title">Development Notes &amp; Action Plan</span>
-        </header>
-        <div className="card-body grid md:grid-cols-2 gap-6">
-          <LongField
-            label="Key Strengths Observed"
-            value={a.narrative.strengths}
-            editable={editableHOD}
-            onChange={(v) =>
-              setA({ ...a, narrative: { ...a.narrative, strengths: v } })
-            }
-          />
-          <LongField
-            label="Areas for Improvement & Action Plan"
-            value={a.narrative.improvements}
-            editable={editableHOD}
-            onChange={(v) =>
-              setA({ ...a, narrative: { ...a.narrative, improvements: v } })
-            }
-          />
-        </div>
-      </section>
-
-      {/* HOD COMMENTS */}
-      <section className="card">
-        <header className="card-header">
-          <span className="card-label">E</span>
-          <span className="card-title">HOD Review &amp; Decision</span>
-        </header>
-        <div className="card-body flex flex-col gap-4">
-          <LongField
-            label="Overall HOD Comments"
-            value={a.narrative.hodComments}
-            editable={editableHOD}
-            onChange={(v) =>
-              setA({ ...a, narrative: { ...a.narrative, hodComments: v } })
-            }
-          />
-          {editableHOD && (
-            <label className="inline-flex items-center gap-2 text-[13px]">
-              <input
-                type="checkbox"
-                checked={a.promotionRecommended}
-                onChange={(e) => setA({ ...a, promotionRecommended: e.target.checked })}
-              />
-              <span>
-                Recommend promotion (only if employee is qualified and consistently strong)
-              </span>
-            </label>
+          ) : (
+            <div className="flex flex-col gap-3">
+              {a.training.map((t) => (
+                <div key={t.training_type} className="grid grid-cols-1 sm:grid-cols-[200px_1fr] gap-2 sm:gap-4 items-start">
+                  <div className="text-[13px] font-semibold pt-2">{t.training_type}</div>
+                  <textarea
+                    className="border border-rule rounded p-2 text-[13px] outline-none focus:border-navy disabled:bg-ghost"
+                    rows={2}
+                    placeholder="Remarks / specific course"
+                    disabled={!editableAppraiser}
+                    value={t.remarks}
+                    onChange={(e) => mutateTraining(t.training_type, { remarks: e.target.value })}
+                  />
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </section>
 
-      {/* SM COMMENTS */}
-      {(session.role === "countersigner" ||
-        a.state === "pending_hr" ||
-        a.state === "pending_employee_ack" ||
-        a.state === "completed") && (
-        <section className="card">
-          <header className="card-header">
-            <span className="card-label">F</span>
-            <span className="card-title">Senior Management Countersign</span>
-          </header>
-          <div className="card-body flex flex-col gap-4">
-            <LongField
-              label="Overall SM Comments"
-              value={a.narrative.smComments}
-              editable={editableSM}
-              onChange={(v) =>
-                setA({ ...a, narrative: { ...a.narrative, smComments: v } })
-              }
-            />
-            {editableSM && (
-              <LongField
-                label="Rejection Reason (if returning to HOD)"
-                value={rejectReason}
-                editable
-                onChange={setRejectReason}
-              />
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* EMPLOYEE ACK */}
-      {session.role === "employee" && (a.state === "pending_employee_ack" || a.state === "completed") && (
-        <section className="card">
-          <header className="card-header">
-            <span className="card-label">G</span>
-            <span className="card-title">Employee Acknowledgement</span>
-          </header>
-          <div className="card-body flex flex-col gap-4">
-            <LongField
-              label="Your Comments (optional)"
-              value={employeeComments}
-              editable={a.state === "pending_employee_ack"}
-              onChange={setEmployeeComments}
-            />
-            {a.employeeAcknowledgedAt && (
-              <div className="text-[13px] text-emerald-700">
-                ✓ Acknowledged on{" "}
-                {new Date(a.employeeAcknowledgedAt).toLocaleString("en-GB")}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* AUDIT */}
+      {/* Staff comments — placed before HOD comments per the PA form layout */}
       <section className="card">
         <header className="card-header">
-          <span className="card-label">H</span>
-          <span className="card-title">Audit Trail</span>
+          <span className="card-label">Staff</span>
+          <span className="card-title">
+            {a.form_type === "workers"
+              ? "Staff comments / Signature"
+              : "Comments / Suggestions for improvement by Staff"}
+          </span>
+          <span className="ml-auto text-[12px] text-slate-500">
+            Completed by the Appraisee
+          </span>
+        </header>
+        <div className="card-body">
+          <textarea
+            className="w-full min-h-[100px] border border-rule rounded p-3 text-[14px] outline-none focus:border-navy disabled:bg-ghost"
+            placeholder="Your comments, suggestions for improvement…"
+            disabled={!editableAppraisee}
+            value={a.narrative.staff_comments}
+            onChange={(e) => mutateNarrative({ staff_comments: e.target.value })}
+          />
+        </div>
+      </section>
+
+      {/* HOD comments */}
+      <section className="card">
+        <header className="card-header">
+          <span className="card-label">HOD</span>
+          <span className="card-title">
+            {a.form_type === "workers"
+              ? "HOD comments / Signature"
+              : "Comments / Suggestions for improvement by Head of Department"}
+          </span>
+        </header>
+        <div className="card-body">
+          <textarea
+            className="w-full min-h-[100px] border border-rule rounded p-3 text-[14px] outline-none focus:border-navy disabled:bg-ghost"
+            placeholder="HOD overall comments and assessment…"
+            disabled={!editableHOD}
+            value={a.narrative.hod_comments}
+            onChange={(e) => mutateNarrative({ hod_comments: e.target.value })}
+          />
+        </div>
+      </section>
+
+      {/* Senior Management comments (panel appears only at / after pending_sm) */}
+      {(editableSM || a.narrative.sm_comments || a.state === "pending_hr" || a.state === "completed") && (
+        <section className="card">
+          <header className="card-header">
+            <span className="card-label">SM</span>
+            <span className="card-title">Concurred by Senior Management — Comments</span>
+          </header>
+          <div className="card-body">
+            <textarea
+              className="w-full min-h-[100px] border border-rule rounded p-3 text-[14px] outline-none focus:border-navy disabled:bg-ghost"
+              disabled={!editableSM}
+              value={a.narrative.sm_comments}
+              onChange={(e) => mutateNarrative({ sm_comments: e.target.value })}
+            />
+          </div>
+        </section>
+      )}
+
+      {/* Section IV — confidential */}
+      {showSection4 && a.section_iv && (
+        <section className="card border-2 border-rose-200">
+          <header className="card-header bg-rose-50/50 flex-col items-start">
+            <div className="text-[12px] tracking-[0.15em] uppercase text-rose-700 font-bold">
+              Not For Discussion With Appraisee
+            </div>
+            <div className="flex items-baseline gap-3">
+              <span className="card-label text-rose-700">(IV)</span>
+              <span className="card-title text-rose-800">
+                Overall Assessment by Head of Department / Senior Management
+              </span>
+            </div>
+          </header>
+          <div className="card-body flex flex-col gap-5">
+            {a.appraisal_type === "confirmation" && (
+              <div className="border border-rule rounded p-4">
+                <div className="text-[11px] tracking-wider uppercase text-slate-500 font-semibold mb-3">
+                  Confirmation Appraisal
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <label className="flex flex-col gap-1">
+                    <span className="field-label">To be confirmed on</span>
+                    <input
+                      type="date"
+                      className="border border-rule rounded px-2 py-2 text-[14px]"
+                      disabled={!editableHOD && !editableSM}
+                      value={a.section_iv.confirmation_date ?? ""}
+                      onChange={(e) =>
+                        mutateSection4({ confirmation_date: e.target.value || null })
+                      }
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="field-label">Confirmation to be extended until</span>
+                    <input
+                      type="date"
+                      className="border border-rule rounded px-2 py-2 text-[14px]"
+                      disabled={!editableHOD && !editableSM}
+                      value={a.section_iv.extension_date ?? ""}
+                      onChange={(e) =>
+                        mutateSection4({ extension_date: e.target.value || null })
+                      }
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+            <div className="flex flex-col gap-2">
+              <span className="field-label">
+                Annual / Promotion Appraisal — please tick the most appropriate box
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {(["continue", "higher_responsibility", "promotion"] as const).map((v) => (
+                  <label
+                    key={v}
+                    className={`flex items-start gap-2 p-3 border border-rule rounded cursor-pointer ${
+                      a.section_iv?.recommendation === v ? "bg-navy/5 border-navy" : ""
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="rec"
+                      checked={a.section_iv?.recommendation === v}
+                      disabled={!editableHOD && !editableSM}
+                      onChange={() => mutateSection4({ recommendation: v })}
+                    />
+                    <span className="text-[13px] font-semibold">
+                      {RECOMMENDATION_LABELS[v]}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            {(a.section_iv.recommendation === "higher_responsibility" ||
+              a.section_iv.recommendation === "promotion") && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <label className="flex flex-col gap-1">
+                  <span className="field-label">Target Role</span>
+                  <input
+                    type="text"
+                    className="border border-rule rounded px-2 py-2 text-[14px]"
+                    disabled={!editableHOD && !editableSM}
+                    value={a.section_iv.target_role ?? ""}
+                    onChange={(e) => mutateSection4({ target_role: e.target.value })}
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="field-label">Timeframe</span>
+                  <input
+                    type="text"
+                    placeholder="e.g. within 12 months"
+                    className="border border-rule rounded px-2 py-2 text-[14px]"
+                    disabled={!editableHOD && !editableSM}
+                    value={a.section_iv.timeframe ?? ""}
+                    onChange={(e) => mutateSection4({ timeframe: e.target.value })}
+                  />
+                </label>
+              </div>
+            )}
+            <label className="flex flex-col gap-1">
+              <span className="field-label">
+                Comments / Suggestions / Justifications for Promotions / Special Achievements in the year
+              </span>
+              <textarea
+                className="w-full min-h-[100px] border border-rule rounded p-3 text-[14px] outline-none focus:border-navy disabled:bg-ghost"
+                disabled={!editableHOD && !editableSM}
+                value={a.section_iv.justification ?? ""}
+                onChange={(e) => mutateSection4({ justification: e.target.value })}
+              />
+            </label>
+          </div>
+        </section>
+      )}
+
+      {/* Section V — HR Official Use (only visible to HR and SM) */}
+      {(role === "hr_admin" || role === "senior_management") && (
+        <section className="card">
+          <header className="card-header">
+            <span className="card-label">(V)</span>
+            <span className="card-title">For HR&rsquo;s Official Use only</span>
+          </header>
+          <div className="card-body">
+            <label className="flex flex-col gap-1">
+              <span className="field-label">Remarks</span>
+              <textarea
+                className="w-full min-h-[100px] border border-rule rounded p-3 text-[14px] outline-none focus:border-navy disabled:bg-ghost"
+                disabled={!editableHR}
+                value={a.narrative.hr_remarks}
+                onChange={(e) => mutateNarrative({ hr_remarks: e.target.value })}
+              />
+            </label>
+            <p className="text-[11px] text-slate-500 italic mt-2">
+              Name / Designation / Signature / Date are captured automatically via the audit trail.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {/* Audit */}
+      <section className="card">
+        <header className="card-header">
+          <span className="card-label">Log</span>
+          <span className="card-title">Audit Trail &amp; Signatures</span>
         </header>
         <div className="card-body">
           {a.audit.length === 0 ? (
             <p className="text-[13px] text-slate-500 italic">No actions yet.</p>
           ) : (
-            <ul className="text-[13px] space-y-2">
-              {[...a.audit]
-                .sort((x, y) => (x.at > y.at ? -1 : 1))
-                .map((e, i) => (
-                  <li key={i} className="flex gap-3 items-start">
-                    <span className="text-slate-400 w-44 shrink-0 text-[12px] font-mono">
-                      {new Date(e.at).toLocaleString("en-GB")}
-                    </span>
-                    <span className="chip bg-slate-100 text-slate-600">{e.actor}</span>
-                    <span>
-                      <strong>{e.actorName}</strong> — {e.action}
-                      {e.detail && (
-                        <span className="text-slate-500 italic"> · {e.detail}</span>
-                      )}
-                    </span>
-                  </li>
-                ))}
+            <ul className="text-[13px] space-y-1.5">
+              {a.audit.map((e, i) => (
+                <li key={i} className="flex gap-2 flex-wrap items-start">
+                  <span className="text-slate-400 text-[11px] font-mono w-40 shrink-0">
+                    {new Date(e.at).toLocaleString("en-GB")}
+                  </span>
+                  <span className="chip bg-slate-100 text-slate-600">{e.actor_role ?? "system"}</span>
+                  <span className="flex-1 min-w-0 break-words">
+                    {e.action}
+                    {e.detail && <span className="text-slate-500 italic"> · {e.detail}</span>}
+                  </span>
+                </li>
+              ))}
             </ul>
           )}
         </div>
       </section>
 
-      {/* ACTIONS */}
+      {/* Actions */}
       <section className="card">
         <div className="card-body flex flex-wrap gap-3 items-center">
-          {!readOnlyMeta || editableHOD || editableSM ? (
-            <button type="button" className="btn btn-ghost" onClick={save} disabled={busy}>
+          {(editableAppraiser || editableAppraisee || editableHOD || editableSM || editableHR) && (
+            <button className="btn btn-ghost" onClick={() => save()} disabled={busy}>
               💾 Save Draft
             </button>
-          ) : null}
-
-          {session.role === "admin" && a.state === "draft" && (
+          )}
+          {editableAppraiser && (
             <button
-              type="button"
               className="btn btn-primary"
               disabled={busy}
-              onClick={() => transition("submit_to_hod")}
+              onClick={() => transition("submit_to_appraisee")}
             >
-              📤 Submit to HOD
+              → Submit to Appraisee
             </button>
           )}
-
+          {editableAppraisee && (
+            <>
+              <button
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={() => transition("appraisee_sign")}
+              >
+                ✓ Sign &amp; Forward to HOD
+              </button>
+              <button
+                className="btn btn-reject"
+                disabled={busy || !rejectReason.trim()}
+                onClick={() => transition("reject", rejectReason)}
+              >
+                ✕ Reject / Dispute
+              </button>
+            </>
+          )}
           {editableHOD && (
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy || !derived.ready}
-              onClick={() => transition("hod_submit")}
-            >
-              ✓ Submit for Countersigning
-            </button>
+            <>
+              <button
+                className="btn btn-primary"
+                disabled={busy}
+                onClick={() => transition("hod_submit")}
+              >
+                → Submit to Senior Management
+              </button>
+              <button
+                className="btn btn-reject"
+                disabled={busy || !rejectReason.trim()}
+                onClick={() => transition("reject", rejectReason)}
+              >
+                ✕ Reject
+              </button>
+            </>
           )}
-
           {editableSM && (
             <>
               <button
-                type="button"
                 className="btn btn-approve"
                 disabled={busy}
-                onClick={() => transition("countersign_approve")}
+                onClick={() => transition("sm_concur")}
               >
-                ✓ Countersign — Send to HR
+                ✓ Concur &amp; Submit to HR
               </button>
               <button
-                type="button"
                 className="btn btn-reject"
                 disabled={busy || !rejectReason.trim()}
-                onClick={() => transition("countersign_reject", { reason: rejectReason })}
+                onClick={() => transition("reject", rejectReason)}
               >
-                ✕ Reject — Return to HOD
+                ✕ Reject to HOD
               </button>
             </>
           )}
-
-          {session.role === "hr" && a.state === "pending_hr" && (
-            <>
-              <button
-                type="button"
-                className="btn btn-approve"
-                disabled={busy}
-                onClick={() => transition("hr_accept")}
-              >
-                💾 Accept &amp; Archive to OneDrive
-              </button>
-              <button
-                type="button"
-                className="btn btn-reject"
-                disabled={busy || !rejectReason.trim()}
-                onClick={() => transition("hr_return", { reason: rejectReason })}
-              >
-                ✕ Return to Admin
-              </button>
-              <textarea
-                className="flex-1 min-w-[240px] border border-rule rounded p-2 text-[13px]"
-                placeholder="Return reason (if returning)"
-                value={rejectReason}
-                onChange={(e) => setRejectReason(e.target.value)}
-              />
-            </>
-          )}
-
-          {session.role === "employee" && a.state === "pending_employee_ack" && (
+          {editableHR && (
             <button
-              type="button"
-              className="btn btn-primary"
+              className="btn btn-approve"
               disabled={busy}
-              onClick={() =>
-                transition("employee_ack", { employeeComments })
-              }
+              onClick={() => transition("hr_accept")}
             >
-              ✓ I Acknowledge Receipt of this Appraisal
+              💾 Accept &amp; Archive
             </button>
           )}
-
-          {a.pdfPath && (
-            <span className="ml-auto text-[12px] text-slate-500 italic">
-              Archived: <code className="text-graphite">{a.pdfPath}</code>
-            </span>
+          {(editableAppraisee || editableHOD || editableSM) && (
+            <input
+              type="text"
+              className="flex-1 min-w-[200px] border border-rule rounded px-2 py-2 text-[13px]"
+              placeholder="Rejection reason (if rejecting)"
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+            />
           )}
         </div>
       </section>
@@ -473,53 +671,13 @@ export default function AppraisalForm({
   );
 }
 
-function Field({
-  label,
-  value,
-  editable,
-  type = "text",
-  onChange,
-}: {
-  label: string;
-  value: string;
-  editable?: boolean;
-  type?: string;
-  onChange?: (v: string) => void;
-}) {
+function Field({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex flex-col gap-1.5">
-      <label className="field-label">{label}</label>
-      <input
-        className={`field-input ${editable ? "" : "text-slate-600"}`}
-        type={type}
-        value={value ?? ""}
-        readOnly={!editable}
-        onChange={(e) => onChange?.(e.target.value)}
-      />
-    </div>
-  );
-}
-
-function LongField({
-  label,
-  value,
-  editable,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  editable?: boolean;
-  onChange?: (v: string) => void;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <h4 className="field-label border-b border-rule pb-2">{label}</h4>
-      <textarea
-        className="w-full min-h-[90px] border border-rule rounded p-3 text-[14px] leading-relaxed outline-none focus:border-navy disabled:bg-ghost"
-        value={value ?? ""}
-        disabled={!editable}
-        onChange={(e) => onChange?.(e.target.value)}
-      />
+    <div className="flex flex-col gap-1">
+      <span className="field-label">{label}</span>
+      <span className="text-[14px] font-medium text-graphite pb-1 border-b border-rule">
+        {value || "—"}
+      </span>
     </div>
   );
 }

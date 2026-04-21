@@ -1,16 +1,19 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/session";
-import { listEmployees } from "@/lib/store";
+import { listEmployees, currentCycleYear } from "@/lib/repo";
 import NewAppraisalForm from "./NewAppraisalForm";
 
-export default function NewAppraisal() {
-  const session = getSession();
-  if (session.role !== "admin") redirect("/");
-  const employees = listEmployees().filter((e) => e.isActive);
+export default async function NewAppraisal() {
+  const s = await getSession();
+  if (!s) redirect("/login");
+  if (s.role !== "hr_admin") redirect("/");
+  const employees = (await listEmployees()).filter(
+    (e) => e.is_active && e.role === "appraisee",
+  );
   return (
-    <div className="flex flex-col gap-5">
-      <h2 className="text-xl font-semibold">New Appraisal</h2>
-      <NewAppraisalForm employees={employees} />
+    <div className="flex flex-col gap-4">
+      <h2 className="text-lg sm:text-xl font-semibold">New Appraisal</h2>
+      <NewAppraisalForm employees={employees} cycleYear={currentCycleYear()} />
     </div>
   );
 }

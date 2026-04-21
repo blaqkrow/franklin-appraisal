@@ -1,19 +1,17 @@
-export function appraisalYearFor(date = new Date()): number {
-  // Cycle: 01 Oct (prev year) - 30 Sep (current year). Appraisal year = year of the Sep end.
-  const y = date.getFullYear();
-  const m = date.getMonth();
-  return m >= 9 ? y + 1 : y;
+export function cycleYearFor(date = new Date()): number {
+  // Appraisal cycle: 01 Oct (prev year) — 30 Sep (current year). Label = end-year.
+  return date.getMonth() >= 9 ? date.getFullYear() + 1 : date.getFullYear();
 }
 
-export function periodLabel(year: number): string {
-  return `01 Oct ${year - 1} – 30 Sep ${year}`;
+export function periodLabel(cycleYear: number): string {
+  return `01 Oct ${cycleYear - 1} – 30 Sep ${cycleYear}`;
 }
 
-export function deadlineFor(year: number): Date {
-  return new Date(year, 9, 7);
+export function deadlineFor(cycleYear: number): Date {
+  return new Date(Date.UTC(cycleYear, 9, 7));
 }
 
-export function daysUntilDeadline(year: number, today = new Date()): number {
-  const d = deadlineFor(year);
-  return Math.ceil((d.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+export function daysUntilDeadline(cycleYear: number, today = new Date()): number {
+  const d = deadlineFor(cycleYear);
+  return Math.ceil((d.getTime() - today.getTime()) / 86400000);
 }

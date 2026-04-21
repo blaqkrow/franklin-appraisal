@@ -1,105 +1,120 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAppraisal, saveAppraisal, transition } from "@/lib/store";
-import { getSession } from "@/lib/session";
-import { isFullyRated } from "@/lib/scoring";
-import { notify } from "@/lib/notify";
+import { requireSession } from "@/lib/session";
+import { getAppraisalFull, transitionAppraisal } from "@/lib/repo";
+import { missingExampleComments, missingRequiredRatings } from "@/lib/scoring";
+import { serviceClient } from "@/lib/supabase";
 import type { AppraisalState } from "@/types";
 
-type Body = {
-  action:
-    | "submit_to_hod"
-    | "hod_submit"
-    | "countersign_approve"
-    | "countersign_reject"
-    | "hr_accept"
-    | "hr_return"
-    | "employee_ack";
-  reason?: string;
-  employeeComments?: string;
+type Action =
+  | "submit_to_appraisee"
+  | "appraisee_sign"
+  | "submit_to_hod"
+  | "hod_submit"
+  | "sm_concur"
+  | "sm_override_submit"
+  | "hr_accept"
+  | "reject";
+
+const NEXT: Record<Action, AppraisalState> = {
+  submit_to_appraisee: "pending_appraisee",
+  appraisee_sign: "pending_hod",
+  submit_to_hod: "pending_hod",
+  hod_submit: "pending_sm",
+  sm_concur: "pending_hr",
+  sm_override_submit: "pending_hr",
+  hr_accept: "completed",
+  reject: "rejected",
 };
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const a = getAppraisal(params.id);
-  if (!a) return NextResponse.json({ error: "not found" }, { status: 404 });
-  const s = getSession();
-  const body = (await req.json()) as Body;
+  const s = await requireSession();
+  const { action, reason, target_state } = (await req.json()) as {
+    action: Action;
+    reason?: string;
+    target_state?: AppraisalState;
+  };
+  const full = await getAppraisalFull(params.id, s);
+  if (!full) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
-  let next: AppraisalState = a.state;
-  let audit = "";
+  // Permission matrix — PRD §7 says routing is "automated based on org chart", so we
+  // check the edge (appraiser_id / hod_id / sm_id / employee_id) rather than the
+  // static `role` enum. The enum just determines the default dashboard view; any
+  // employee can act in a slot they occupy via the org chart.
+  const isAppraiser = full.appraiser_id === s.employeeId;
+  const isAppraisee = full.employee_id === s.employeeId;
+  const isHOD = full.hod_id === s.employeeId;
+  const isSM = full.sm_id === s.employeeId || s.role === "senior_management";
+  const isHR = s.role === "hr_admin";
 
-  if (body.action === "submit_to_hod" && s.role === "admin") {
-    next = "pending_hod";
-    audit = "Admin submitted appraisal to HOD";
-    await notify.submittedToHOD({ appraisalId: a.id, to: a.hodId });
-  } else if (body.action === "hod_submit" && s.role === "hod") {
-    if (!isFullyRated(a.scores))
-      return NextResponse.json({ error: "All factors must be rated" }, { status: 400 });
-    const missingRemarks = a.scores.filter(
-      (x) => (x.hodRating === 1 || x.hodRating === 5) && !x.hodRemarks.trim(),
-    );
-    if (missingRemarks.length)
-      return NextResponse.json(
-        {
-          error: `Remarks required for ratings of 1 or 5: ${missingRemarks.map((m) => m.factorName).join(", ")}`,
-        },
-        { status: 400 },
+  const allowed = (() => {
+    if (action === "submit_to_appraisee") return isAppraiser && full.state === "pending_appraiser";
+    if (action === "appraisee_sign") return isAppraisee && full.state === "pending_appraisee";
+    if (action === "hod_submit") return isHOD && full.state === "pending_hod";
+    if (action === "sm_concur" || action === "sm_override_submit")
+      return isSM && full.state === "pending_sm";
+    if (action === "hr_accept") return isHR && full.state === "pending_hr";
+    if (action === "reject")
+      return (
+        isHR ||
+        (isSM && full.state === "pending_sm") ||
+        (isHOD && full.state === "pending_hod") ||
+        (isAppraisee && full.state === "pending_appraisee")
       );
-    if (!a.narrative.hodComments.trim())
-      return NextResponse.json({ error: "Overall HOD comments required" }, { status: 400 });
-    // gate check (production worker only)
-    const safety = a.scores.find((x) => x.factorNo === "01");
-    const gateFail = a.formType === "production_worker" && safety?.hodRating === 1;
-    next = gateFail ? "gate_fail" : "pending_countersign";
-    audit = gateFail ? "HOD submitted — Gate Fail triggered" : "HOD submitted for countersigning";
-    if (!gateFail) await notify.submittedToCountersign({ appraisalId: a.id, to: a.countersignerId });
-  } else if (
-    body.action === "countersign_approve" &&
-    s.role === "countersigner" &&
-    (a.state === "pending_countersign" || a.state === "gate_fail")
-  ) {
-    next = "pending_hr";
-    audit = "Senior Management countersigned and sent to HR";
-  } else if (body.action === "countersign_reject" && s.role === "countersigner") {
-    if (!body.reason?.trim())
-      return NextResponse.json({ error: "Rejection reason required" }, { status: 400 });
-    a.narrative.rejectReason = body.reason;
-    saveAppraisal(a);
-    next = "rejected_to_hod";
-    audit = `Senior Management rejected to HOD: ${body.reason}`;
-    await notify.rejected({ appraisalId: a.id, reason: body.reason });
-  } else if (body.action === "hr_accept" && s.role === "hr") {
-    next = "pending_employee_ack";
-    audit = "HR accepted; employee notified";
-    a.pdfPath = `/HR/Appraisals/${a.appraisalYear}/${a.appraisalYear}_${a.formType === "production_worker" ? "OPS" : "OFC"}_${a.employeeId}_Appraisal.pdf`;
-    saveAppraisal(a);
-    await notify.hrAccepted({ appraisalId: a.id, pdfPath: a.pdfPath });
-  } else if (body.action === "hr_return" && s.role === "hr") {
-    if (!body.reason?.trim())
-      return NextResponse.json({ error: "Reason required" }, { status: 400 });
-    a.narrative.rejectReason = body.reason;
-    saveAppraisal(a);
-    next = "rejected_to_admin";
-    audit = `HR returned to admin: ${body.reason}`;
-  } else if (body.action === "employee_ack" && s.role === "employee") {
-    if (body.employeeComments != null) {
-      a.narrative.employeeComments = body.employeeComments;
-      saveAppraisal(a);
-    }
-    next = "completed";
-    audit = "Employee acknowledged receipt";
-    await notify.acknowledged({ appraisalId: a.id });
-  } else {
+    return false;
+  })();
+  if (!allowed) {
     return NextResponse.json(
-      { error: `Action '${body.action}' not allowed for role '${s.role}' in state '${a.state}'` },
-      { status: 400 },
+      { error: `Action '${action}' not allowed for role '${s.role}' in state '${full.state}'` },
+      { status: 403 },
     );
   }
 
-  const updated = transition(params.id, next, {
-    actor: s.role,
-    actorName: s.name,
-    action: audit,
-    detail: body.reason,
-  });
+  // Validations
+  if (action === "submit_to_appraisee") {
+    const unrated = missingRequiredRatings(full.scores);
+    if (unrated.length) {
+      return NextResponse.json(
+        { error: `Please rate all applicable criteria: ${unrated.map((x) => x.criterion_no).join(", ")}` },
+        { status: 400 },
+      );
+    }
+    const noComments = missingExampleComments(full.scores);
+    if (noComments.length) {
+      return NextResponse.json(
+        {
+          error: `Cite examples in comments for criteria: ${noComments.map((x) => x.criterion_no).join(", ")}`,
+        },
+        { status: 400 },
+      );
+    }
+    if (!full.narrative.appraiser_overall_comments.trim()) {
+      return NextResponse.json({ error: "Appraiser overall comments required" }, { status: 400 });
+    }
+  }
+  if (action === "hod_submit") {
+    if (!full.narrative.hod_comments.trim()) {
+      return NextResponse.json({ error: "HOD comments required" }, { status: 400 });
+    }
+    if (full.appraisal_type === "promotion" || full.section_iv?.recommendation) {
+      // ok — already set
+    }
+  }
+  if (action === "reject" && !reason?.trim()) {
+    return NextResponse.json({ error: "Rejection reason required" }, { status: 400 });
+  }
+
+  // Apply transition
+  let next: AppraisalState = NEXT[action];
+  if (action === "reject") {
+    next = "rejected";
+    await serviceClient()
+      .from("appraisals")
+      .update({ rejected_reason: reason })
+      .eq("id", full.id);
+  }
+  if (action === "reject" && target_state) next = target_state;
+
+  await transitionAppraisal(full.id, next, s, reason);
+  const updated = await getAppraisalFull(full.id, s);
   return NextResponse.json(updated);
 }

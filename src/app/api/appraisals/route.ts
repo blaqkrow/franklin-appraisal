@@ -1,24 +1,48 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireSession } from "@/lib/session";
 import {
-  appraisalsForRole,
   bulkCreateForCycle,
-  createAppraisalFor,
-} from "@/lib/store";
-import { getSession } from "@/lib/session";
+  createAppraisal,
+  currentCycleYear,
+  listAppraisalsFor,
+  transitionAppraisal,
+} from "@/lib/repo";
+import type { AppraisalType } from "@/types";
 
 export async function GET() {
-  const s = getSession();
-  return NextResponse.json(appraisalsForRole(s.role, s.userId));
+  try {
+    const s = await requireSession();
+    const rows = await listAppraisalsFor(s);
+    return NextResponse.json(rows);
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 401 });
+  }
 }
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as { employeeId?: string; bulk?: boolean };
+  const s = await requireSession();
+  if (s.role !== "hr_admin") {
+    return NextResponse.json({ error: "HR admin only" }, { status: 403 });
+  }
+  const body = (await req.json()) as {
+    bulk?: boolean;
+    employee_id?: string;
+    appraisal_type?: AppraisalType;
+    cycle_year?: number;
+  };
+  const cycleYear = body.cycle_year ?? currentCycleYear();
   if (body.bulk) {
-    return NextResponse.json(bulkCreateForCycle());
+    const result = await bulkCreateForCycle(cycleYear, s);
+    return NextResponse.json(result);
   }
-  if (!body.employeeId) {
-    return NextResponse.json({ error: "employeeId required" }, { status: 400 });
+  if (!body.employee_id) {
+    return NextResponse.json({ error: "employee_id required" }, { status: 400 });
   }
-  const a = createAppraisalFor(body.employeeId);
+  const a = await createAppraisal({
+    employeeId: body.employee_id,
+    appraisalType: body.appraisal_type ?? "annual",
+    cycleYear,
+  });
+  await transitionAppraisal(a.id, "pending_appraiser", s, "Admin kick-off");
   return NextResponse.json(a);
 }

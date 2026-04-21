@@ -1,150 +1,158 @@
-import type { Factor, FormType } from "@/types";
+import type { Criterion, FormType } from "@/types";
 
-export const PRODUCTION_WORKER_FACTORS: Factor[] = [
-  {
-    no: "01",
-    name: "Safety & Compliance",
-    weight: 0.25,
-    gate: true,
-    indicators:
-      "0 incidents, full PPE compliance → 5 | 1 minor near-miss or PPE lapse → 3 | LTI or deliberate SOP breach → 1",
-  },
-  {
-    no: "02",
-    name: "Quality & Accuracy",
-    weight: 0.2,
-    indicators:
-      "0 reworks, 100% first-pass inspection → 5 | 2–3 QC-flagged reworks → 3 | Customer complaint or failed proof load → 1",
-  },
-  {
-    no: "03",
-    name: "Productivity & Output",
-    weight: 0.15,
-    indicators:
-      "≥110% of output standard → 5 | 100–109% → 4 | 85–99% → 3 | 70–84% → 2 | <70% → 1",
-  },
-  {
-    no: "04",
-    name: "Process Adherence & Work Standards",
-    weight: 0.15,
-    indicators:
-      "0 deviations, full traceability records → 5 | 2–3 minor deviations corrected by supervisor → 3 | Unauthorised shortcut on critical step → 1",
-  },
-  {
-    no: "05",
-    name: "Technical Competency & Skill Development",
-    weight: 0.1,
-    indicators:
-      "Multi-sling types, WLL knowledge, cert in progress → 5 | Single type, basic knowledge → 3 | Minimal skill breadth → 1",
-  },
-  {
-    no: "06",
-    name: "Teamwork & Communication",
-    weight: 0.1,
-    indicators:
-      "Proactively communicates, assists and mentors peers → 5 | Cooperative when prompted → 3 | Poor communication affecting floor output → 1",
-  },
-  {
-    no: "07",
-    name: "Reliability & Attendance",
-    weight: 0.05,
-    indicators:
-      "0 absences, 0 late → 5 | ≤1 notified absence → 4 | 2–3 absences → 3 | 4–5 absences → 2 | ≥6 or no-shows → 1",
-  },
+// ── Non-Office / Workers PA Form — 11 criteria ─────────────────────────────
+// Text matches "FOI - Workers PA Form (for MIS_updated 20260116).doc" verbatim.
+export const WORKERS_CRITERIA: Criterion[] = [
+  { no: 1,  name: "Quality of Work / Product Knowledge",
+    description: "Neat, accurate and timely in completion of the job with correct application of relevant product knowledge.",
+    optional: false },
+  { no: 2,  name: "Quantity of Work Done",
+    description: "Ability to handle routine and extra workload.",
+    optional: false },
+  { no: 3,  name: "Safety / Housekeeping",
+    description: "The maintenance of a clean, organised and safe workplace.",
+    optional: false },
+  { no: 4,  name: "Teamwork",
+    description: "Ability to work effectively as part of a team.",
+    optional: false },
+  { no: 5,  name: "Compliance",
+    description: "Ability to understand, follow instructions & to process work according to internal SOP correctly.",
+    optional: false },
+  { no: 6,  name: "Attitude to Job/Enthusiasm for Work",
+    description: "Demonstrate interest and have a positive attitude towards the job.",
+    optional: false },
+  { no: 7,  name: "Work Discipline",
+    description: "Observation of company rules & regulations, including punctuality and attendance.",
+    optional: false },
+  { no: 8,  name: "Responsibility / Reliability",
+    description: "Being responsible and hardworking. The level of reliance that can be placed on the staff to complete work assignments.",
+    optional: false },
+  { no: 9,  name: "Initiative / Problem Solving",
+    description: "Ability to take initiative and to offer ideas on work improvements. Ability to solve work problem.",
+    optional: false },
+  { no: 10, name: "Customer Service Attitude",
+    description: "To interact courteously and professionally with customers and external parties.",
+    optional: false },
+  { no: 11, name: "Supervisory Skills (if applicable)",
+    description: "Ability to lead and manage team to complete work assignments.",
+    optional: true  },
 ];
 
-export const OFFICE_STAFF_FACTORS: Factor[] = [
-  {
-    no: "01",
-    name: "Quality of Work",
-    weight: 0.17,
-    indicators: "Error rate ≤5%. ≤1 mistake per month.",
-  },
-  {
-    no: "02",
-    name: "Quantity / Productivity",
-    weight: 0.17,
-    indicators:
-      "Completes 90–100% of assigned tasks on time. Rework required ≤1 time per month.",
-  },
-  {
-    no: "03",
-    name: "Safety Compliance",
-    weight: 0.16,
-    indicators:
-      "0 serious safety violations. ≤3 minor safety lapses during appraisal period.",
-  },
-  {
-    no: "04",
-    name: "Reliability / Attendance",
-    weight: 0.09,
-    indicators:
-      "Attendance ≥90%. Unplanned absenteeism ≤2 days per quarter. Late arrival ≤2 times per month.",
-  },
-  {
-    no: "05",
-    name: "Initiative / Problem Solving",
-    weight: 0.09,
-    indicators: "Solves routine problems ≥80% independently.",
-  },
-  {
-    no: "06",
-    name: "Attitude & Enthusiasm",
-    weight: 0.09,
-    indicators:
-      "Maintains professional behaviour ≥90% of the time. 0 formal valid complaints or warnings.",
-  },
-  {
-    no: "07",
-    name: "Process Adherence",
-    weight: 0.09,
-    indicators:
-      "Follows SOPs and work standards ≥90% of the time. ≤1 non-adherence per month.",
-  },
-  {
-    no: "08",
-    name: "Skill Development / Growth Potential",
-    weight: 0.07,
-    indicators:
-      "Shows ability to learn, apply new skills, and handle increased responsibility with guidance.",
-  },
-  {
-    no: "09",
-    name: "Teamwork",
-    weight: 0.07,
-    indicators: "Cooperates with team in ≥80% of work activities.",
-  },
+// ── Office Staff PA Form — 15 criteria ─────────────────────────────────────
+// Text matches "FOI - Office Staff PA Form (for MIS _updated 20260116).doc" verbatim.
+// Note: criterion 1 uses "Jobs skills" as written in the source document.
+export const OFFICE_CRITERIA: Criterion[] = [
+  { no: 1,  name: "Jobs skills, Product Knowledge & Quality of Work",
+    description: "Ability to apply product knowledge, provide accurate information, and to perform task effectively and efficiently.",
+    optional: false },
+  { no: 2,  name: "Planning & Organisation",
+    description: "Ability to plan and organise tasks. Time management.",
+    optional: false },
+  { no: 3,  name: "Compliance & Accuracy & SOP Adherence",
+    description: "Ability to comply with work requirements and ensure work accuracy by complying to company policies, SOPs, safety rules, and internal workflows correctly.",
+    optional: false },
+  { no: 4,  name: "Commitment & Dependability",
+    description: "Being responsible and hardworking. Trustworthiness and reliability.",
+    optional: false },
+  { no: 5,  name: "Teamwork",
+    description: "Ability to work effectively as part of a team. Interpersonal skills.",
+    optional: false },
+  { no: 6,  name: "Service Attitude",
+    description: "Ability to respond to customer needs, resolve issues, maintain professionalism, and represent the company well. Being courteous, positive, well-mannered and well-groomed.",
+    optional: false },
+  { no: 7,  name: "Creativity",
+    description: "Ability to take initiative and to contribute constructive new ideas for improvement.",
+    optional: false },
+  { no: 8,  name: "Responsiveness & Adaptability",
+    description: "Ability to respond quickly to instructions and changes.",
+    optional: false },
+  { no: 9,  name: "Communication",
+    description: "Ability to understand and to express ideas clearly as well as to share information.",
+    optional: false },
+  { no: 10, name: "Work Discipline",
+    description: "Observation of company rules & regulations, including punctuality and attendance.",
+    optional: false },
+  { no: 11, name: "Supervisory/Leadership Skills (if applicable)",
+    description: "Ability to lead and manage team to achieve business goals.",
+    optional: true  },
+  { no: 12, name: "Meeting of Sales Targets (if applicable)",
+    description: "Ability to meet sales targets set.",
+    optional: true  },
+  { no: 13, name: "Create New Customer Accounts (if applicable)",
+    description: "Ability to create new customer accounts.",
+    optional: true  },
+  { no: 14, name: "Customer Relationship (if applicable)",
+    description: "Maintaining and managing relationship with customers. Planning customer visits (no. of sales visits), keeping close contact with customers and submitting sales visit reports.",
+    optional: true  },
+  { no: 15, name: "Debt Collection Effort (if applicable)",
+    description: "The effort put in to collect payments from customers, especially long overdue payments.",
+    optional: true  },
 ];
 
-export function factorsFor(formType: FormType): Factor[] {
-  return formType === "production_worker"
-    ? PRODUCTION_WORKER_FACTORS
-    : OFFICE_STAFF_FACTORS;
+export function criteriaFor(formType: FormType): Criterion[] {
+  return formType === "workers" ? WORKERS_CRITERIA : OFFICE_CRITERIA;
 }
 
-export const RATING_LABELS: Record<number, { label: string; desc: string }> = {
-  5: { label: "Outstanding", desc: "Consistently and significantly exceeds expectations" },
-  4: { label: "Exceeds Expectation", desc: "Above the required standard in most areas" },
-  3: { label: "Meets Expectation", desc: "Fully satisfactory; meets all requirements" },
-  2: { label: "Below Expectation", desc: "Falls short of the required standard in key areas" },
-  1: { label: "Very Much Below", desc: "Significantly below standard; immediate improvement needed" },
-};
+// Rating scale per Section II of both forms, verbatim
+export const RATING_LABELS: { value: number; label: string; desc: string }[] = [
+  { value: 5, label: "Excellent",     desc: "Meet Expectation all the time" },
+  { value: 4, label: "Good",          desc: "Meet Expectation most of the time" },
+  { value: 3, label: "Satisfactory",  desc: "Meet Expectation some of the time" },
+  { value: 2, label: "Poor",          desc: "Below Expectation" },
+  { value: 1, label: "Very Poor",     desc: "Very much below Expectation" },
+];
 
 export const PERFORMANCE_BANDS = [
-  { min: 4.5, max: 5.0, label: "Outstanding", color: "#065f46" },
-  { min: 3.5, max: 4.49, label: "Exceeds Expectations", color: "#1d6e3f" },
-  { min: 2.5, max: 3.49, label: "Meets Expectations", color: "#374151" },
-  { min: 1.5, max: 2.49, label: "Below Expectations", color: "#b45309" },
-  { min: 1.0, max: 1.49, label: "Very Much Below Expectations", color: "#b91c1c" },
+  { min: 85, max: 100,   label: "Outstanding",         color: "#065f46" },
+  { min: 70, max: 84.99, label: "Good",                color: "#1d6e3f" },
+  { min: 55, max: 69.99, label: "Satisfactory",        color: "#374151" },
+  { min: 40, max: 54.99, label: "Below Expectation",   color: "#b45309" },
+  { min: 0,  max: 39.99, label: "Unsatisfactory",      color: "#b91c1c" },
 ] as const;
 
-export const GUIDELINES = [
-  "Stay within the review period: 01 October (previous year) to 30 September (current year).",
-  "Do not refer to past appraisal reports when completing the current one.",
-  "Be objective — do not let personal feelings or relationships influence the rating.",
-  "Consider each factor independently — do not let one trait influence the overall rating.",
-  "Rate each factor individually first; do not decide the overall score in advance.",
-  "Only recommend promotion if the employee is qualified and has consistently strong performance.",
-  "If supervised for less than 6 months, consult the previous supervisor and record the consultation in comments.",
-  "All forms must be submitted to HR by 7 October this year.",
+export function bandFor(pct: number | null): { label: string; color: string } | null {
+  if (pct == null) return null;
+  for (const b of PERFORMANCE_BANDS) {
+    if (pct >= b.min && pct <= b.max) return { label: b.label, color: b.color };
+  }
+  return null;
+}
+
+// ── Training taxonomies (verbatim from the two PA forms) ───────────────────
+export const WORKERS_TRAINING = [
+  "SSIC – GT",
+  "Rigging/Material Handling Course",
+  "Lifting Supervisor Safety Course",
+  "SSIC - Hotwork",
+  "Occupational First Aid Course",
+  "Shipyard Safety Supervisor Course",
+  "Bosiet Course",
+  "Forklift Operations Course",
+  "Others: pls specify",
 ];
+
+export const OFFICE_TRAINING = [
+  "Technical Competency",
+  "Service Excellence",
+  "Communications",
+  "Supervisory/Leadership",
+  "Others",
+];
+
+export function trainingFor(formType: FormType): string[] {
+  return formType === "workers" ? WORKERS_TRAINING : OFFICE_TRAINING;
+}
+
+// Source-doc form headings (also used in reports)
+export const APPRAISAL_TYPE_LABELS: Record<string, string> = {
+  annual:       "Annual Appraisal",
+  confirmation: "Confirmation Appraisal",
+  promotion:    "Promotion Appraisal",
+};
+
+// Section IV checkbox options (matches the three boxes in Section IV of both forms)
+export const RECOMMENDATION_LABELS: Record<string, string> = {
+  continue:              "Continue in current position",
+  higher_responsibility: "Ready for higher responsibility in (state time frame)",
+  promotion:             "Recommend for promotion to",
+};

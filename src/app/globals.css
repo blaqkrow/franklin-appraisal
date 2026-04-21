@@ -9,6 +9,11 @@ body {
   font-family: "DM Sans", system-ui, sans-serif;
   color: #0d0d0d;
   background: #f1f5f9;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (max-width: 640px) {
+  html { font-size: 15px; }
 }
 
 @layer components {
@@ -16,7 +21,7 @@ body {
     @apply bg-white rounded-md shadow-card overflow-hidden;
   }
   .card-header {
-    @apply px-7 py-4 border-b border-rule flex items-baseline gap-3;
+    @apply px-4 sm:px-7 py-4 border-b border-rule flex items-baseline gap-3 flex-wrap;
   }
   .card-label {
     @apply text-[11px] font-semibold tracking-[0.12em] uppercase text-slate-500;
@@ -25,10 +30,10 @@ body {
     @apply text-sm font-medium text-graphite;
   }
   .card-body {
-    @apply px-7 py-6;
+    @apply px-4 sm:px-7 py-5 sm:py-6;
   }
   .btn {
-    @apply inline-flex items-center gap-2 text-[13px] font-semibold px-5 py-2 rounded-md transition;
+    @apply inline-flex items-center gap-2 text-[13px] font-semibold px-4 sm:px-5 py-2 rounded-md transition min-h-[42px];
   }
   .btn-primary {
     @apply bg-navy text-white hover:bg-navy-dark;
@@ -52,6 +57,18 @@ body {
     @apply text-[14px] bg-transparent border-0 border-b border-rule focus:border-navy outline-none py-1.5 w-full;
   }
   .chip {
-    @apply inline-flex items-center gap-1 text-[11px] font-semibold tracking-wider uppercase px-2.5 py-0.5 rounded-full;
+    @apply inline-flex items-center gap-1 text-[11px] font-semibold tracking-wider uppercase px-2.5 py-0.5 rounded-full whitespace-nowrap;
+  }
+  .rating-pill {
+    @apply w-11 h-11 rounded-full border-2 flex items-center justify-center text-[14px] font-semibold cursor-pointer transition;
+  }
+  .rating-pill-off {
+    @apply border-rule text-slate-500 hover:border-navy hover:text-navy;
+  }
+  .rating-pill-on {
+    @apply bg-navy text-white border-navy shadow;
+  }
+  .rating-pill-sm {
+    @apply bg-amber-500 text-white border-amber-500 shadow;
   }
 }

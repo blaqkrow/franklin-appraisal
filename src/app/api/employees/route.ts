@@ -1,27 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listEmployees, upsertEmployee } from "@/lib/store";
-import type { Employee } from "@/types";
+import { requireSession } from "@/lib/session";
+import { listEmployees, upsertEmployee } from "@/lib/repo";
 
 export async function GET() {
-  return NextResponse.json(listEmployees());
+  await requireSession();
+  return NextResponse.json(await listEmployees());
 }
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as Partial<Employee>;
-  const id = body.id ?? `usr_${Math.random().toString(36).slice(2, 10)}`;
-  const e: Employee = {
-    id,
-    employeeId: body.employeeId ?? "",
-    name: body.name ?? "",
-    email: body.email ?? "",
-    department: body.department ?? "",
-    designation: body.designation ?? "",
-    formType: body.formType ?? "office_staff",
-    hodId: body.hodId,
-    countersignerId: body.countersignerId,
-    isActive: body.isActive ?? true,
-    joinedDate: body.joinedDate ?? new Date().toISOString().slice(0, 10),
-  };
-  upsertEmployee(e);
+  const s = await requireSession();
+  if (s.role !== "hr_admin") return NextResponse.json({ error: "HR admin only" }, { status: 403 });
+  const body = await req.json();
+  if (!body.employee_no || !body.name) {
+    return NextResponse.json({ error: "employee_no and name required" }, { status: 400 });
+  }
+  const e = await upsertEmployee(body);
   return NextResponse.json(e);
 }

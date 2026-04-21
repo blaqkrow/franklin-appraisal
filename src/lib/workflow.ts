@@ -1,70 +1,84 @@
-import type { Appraisal, AppraisalState, Role } from "@/types";
+import type { AppRole, Appraisal, AppraisalState } from "@/types";
 
 export const STATE_LABEL: Record<AppraisalState, string> = {
-  draft: "Draft",
-  pending_hod: "Pending HOD",
-  hod_overdue: "HOD Overdue",
-  pending_countersign: "Pending Countersign",
-  pending_hr: "Pending HR",
-  pending_employee_ack: "Pending Employee Ack",
-  completed: "Completed",
-  rejected_to_hod: "Rejected — Return to HOD",
-  rejected_to_admin: "Rejected — Return to Admin",
-  gate_fail: "Gate Fail",
+  draft:              "Draft",
+  pending_appraiser:  "Pending Appraiser",
+  pending_appraisee:  "Pending Appraisee",
+  pending_hod:        "Pending HOD",
+  pending_sm:         "Pending Senior Management",
+  pending_hr:         "Pending HR",
+  completed:          "Completed",
+  rejected:           "Rejected",
+  overdue:            "Overdue",
 };
 
 export const STATE_BADGE: Record<AppraisalState, string> = {
-  draft: "bg-slate-200 text-slate-700",
-  pending_hod: "bg-amber-100 text-amber-800",
-  hod_overdue: "bg-amber-200 text-amber-900",
-  pending_countersign: "bg-indigo-100 text-indigo-800",
-  pending_hr: "bg-sky-100 text-sky-800",
-  pending_employee_ack: "bg-purple-100 text-purple-800",
-  completed: "bg-emerald-100 text-emerald-800",
-  rejected_to_hod: "bg-rose-100 text-rose-800",
-  rejected_to_admin: "bg-rose-100 text-rose-800",
-  gate_fail: "bg-red-200 text-red-900",
+  draft:              "bg-slate-200 text-slate-700",
+  pending_appraiser:  "bg-amber-100 text-amber-800",
+  pending_appraisee:  "bg-sky-100 text-sky-800",
+  pending_hod:        "bg-indigo-100 text-indigo-800",
+  pending_sm:         "bg-violet-100 text-violet-800",
+  pending_hr:         "bg-teal-100 text-teal-800",
+  completed:          "bg-emerald-100 text-emerald-800",
+  rejected:           "bg-rose-100 text-rose-800",
+  overdue:            "bg-orange-200 text-orange-900",
 };
 
 export const WORKFLOW_STEPS: { key: AppraisalState[]; label: string }[] = [
-  { key: ["draft"], label: "Admin Creates" },
-  { key: ["pending_hod", "hod_overdue", "rejected_to_hod"], label: "HOD Scores" },
-  { key: ["pending_countersign"], label: "Countersign" },
-  { key: ["pending_hr", "rejected_to_admin"], label: "HR Accepts" },
-  { key: ["pending_employee_ack"], label: "Employee Ack" },
-  { key: ["completed"], label: "Archived" },
+  { key: ["draft"],                                 label: "Draft" },
+  { key: ["pending_appraiser"],                     label: "Appraiser" },
+  { key: ["pending_appraisee"],                     label: "Appraisee" },
+  { key: ["pending_hod"],                           label: "HOD" },
+  { key: ["pending_sm"],                            label: "Senior Mgmt" },
+  { key: ["pending_hr"],                            label: "HR" },
+  { key: ["completed"],                             label: "Completed" },
 ];
 
 export function currentStepIndex(state: AppraisalState): number {
   for (let i = 0; i < WORKFLOW_STEPS.length; i++) {
     if (WORKFLOW_STEPS[i].key.includes(state)) return i;
   }
-  return state === "gate_fail" ? 1 : 0;
+  return 0;
 }
 
-export function canActAs(role: Role, state: AppraisalState): boolean {
-  if (role === "admin") return state === "draft" || state === "rejected_to_admin";
-  if (role === "hod")
-    return state === "pending_hod" || state === "hod_overdue" || state === "rejected_to_hod";
-  if (role === "countersigner") return state === "pending_countersign" || state === "gate_fail";
-  if (role === "hr") return state === "pending_hr";
-  if (role === "employee") return state === "pending_employee_ack";
+export const ROLE_LABEL: Record<AppRole, string> = {
+  hr_admin:          "HR Administrator",
+  senior_management: "Senior Management",
+  hod:               "HOD / Manager",
+  appraiser:         "Appraiser",
+  appraisee:         "Appraisee",
+};
+
+/**
+ * Can this role act in the given state?
+ * Note: HR admin can act at almost any step (kick-off, reset).
+ */
+export function canActOn(role: AppRole, state: AppraisalState): boolean {
+  if (role === "hr_admin") return true;
+  if (role === "senior_management") return state === "pending_sm";
+  if (role === "hod") return state === "pending_hod";
+  if (role === "appraiser") return state === "pending_appraiser";
+  if (role === "appraisee") return state === "pending_appraisee";
   return false;
 }
 
-export function canView(role: Role, a: Appraisal, userId?: string): boolean {
-  if (role === "admin" || role === "hr") return true;
-  if (role === "hod") return a.hodId === userId;
-  if (role === "countersigner") return a.countersignerId === userId;
-  if (role === "employee") return a.employeeId === userId;
+export function canViewSectionIV(role: AppRole): boolean {
+  // Strict rule from PRD §6: Appraisee NEVER sees Section IV at frontend or backend.
+  return role === "hr_admin" || role === "senior_management" || role === "hod";
+}
+
+export function canViewAppraisal(
+  role: AppRole,
+  userId: string,
+  a: Pick<Appraisal, "employee_id" | "appraiser_id" | "hod_id" | "sm_id">,
+): boolean {
+  if (role === "hr_admin" || role === "senior_management") return true;
+  if (role === "hod") return a.hod_id === userId;
+  if (role === "appraiser") return a.appraiser_id === userId;
+  if (role === "appraisee") return a.employee_id === userId;
   return false;
 }
 
-export function daysInState(a: Appraisal): number {
-  const last = a.updatedAt ?? a.createdAt;
-  return Math.floor((Date.now() - new Date(last).getTime()) / (1000 * 60 * 60 * 24));
-}
-
-export function isOverdue(a: Appraisal): boolean {
-  return a.state === "pending_hod" && daysInState(a) >= 3;
+export function daysInState(a: Pick<Appraisal, "updated_at">): number {
+  return Math.floor((Date.now() - new Date(a.updated_at).getTime()) / 86400000);
 }
